@@ -1,8 +1,18 @@
 
 {
 
-  function token(type, args) {
-    return {type, args};
+  function token(type, arg, location) {
+    return {type, arg, location};
+  }
+
+  class Fluorite8CompileError extends Error {
+
+    constructor(message, fl8Location) {
+      super(message + " (L:" + fl8Location.line + ",C:" + fl8Location.column + ")");
+      this.name = "Fluorite8CompileError";
+      this.fl8Location = fl8Location;
+    }
+
   }
 
   class Environment {
@@ -20,10 +30,10 @@
 
     compile(domain, token) {
       const list1 = this.handlerRegistry[domain];
-      if (list1 === undefined) throw new Error("No such domain: " + domain);
+      if (list1 === undefined) throw new Fluorite8CompileError("No such domain: " + domain, token.location);
       const list2 = list1[token.type];
-      if (list2 === undefined) throw new Error("No such handler: " + domain + "/" + token.type);
-      return list2(this, token.args);
+      if (list2 === undefined) throw new Fluorite8CompileError("No such handler: " + domain + "/" + token.type, token.location);
+      return list2(this, token);
     }
 
   }
@@ -36,51 +46,51 @@
 
     const env = new Environment();
 
-    env.registerHandler("get", "integer", (env, arg) => {
-      return codeGet("", "" + parseInt(arg, 10), "number");
+    env.registerHandler("get", "integer", (env, token) => {
+      return codeGet("", "" + parseInt(token.arg, 10), "number");
     });
-    env.registerHandler("get", "round", (env, arg) => {
-      return env.compile("get", arg[0]);
+    env.registerHandler("get", "round", (env, token) => {
+      return env.compile("get", token.arg[0]);
     });
-    env.registerHandler("get", "circumflex", (env, arg) => {
-      const node1 = env.compile("get", arg[0])
-      const node2 = env.compile("get", arg[1])
+    env.registerHandler("get", "circumflex", (env, token) => {
+      const node1 = env.compile("get", token.arg[0])
+      const node2 = env.compile("get", token.arg[1])
       return codeGet(
         node1.head + node2.head,
         "(Math.pow(" + node1.body + ", " + node2.body + "))",
         "number"
       );
     });
-    env.registerHandler("get", "asterisk", (env, arg) => {
-      const node1 = env.compile("get", arg[0])
-      const node2 = env.compile("get", arg[1])
+    env.registerHandler("get", "asterisk", (env, token) => {
+      const node1 = env.compile("get", token.arg[0])
+      const node2 = env.compile("get", token.arg[1])
       return codeGet(
         node1.head + node2.head,
         "(" + node1.body + " * " + node2.body + ")",
         "number"
       );
     });
-    env.registerHandler("get", "slash", (env, arg) => {
-      const node1 = env.compile("get", arg[0])
-      const node2 = env.compile("get", arg[1])
+    env.registerHandler("get", "slash", (env, token) => {
+      const node1 = env.compile("get", token.arg[0])
+      const node2 = env.compile("get", token.arg[1])
       return codeGet(
         node1.head + node2.head,
         "(" + node1.body + " / " + node2.body + ")",
         "number"
       );
     });
-    env.registerHandler("get", "plus", (env, arg) => {
-      const node1 = env.compile("get", arg[0])
-      const node2 = env.compile("get", arg[1])
+    env.registerHandler("get", "plus", (env, token) => {
+      const node1 = env.compile("get", token.arg[0])
+      const node2 = env.compile("get", token.arg[1])
       return codeGet(
         node1.head + node2.head,
         "(" + node1.body + " + " + node2.body + ")",
         "number"
       );
     });
-    env.registerHandler("get", "minus", (env, arg) => {
-      const node1 = env.compile("get", arg[0])
-      const node2 = env.compile("get", arg[1])
+    env.registerHandler("get", "minus", (env, token) => {
+      const node1 = env.compile("get", token.arg[0])
+      const node2 = env.compile("get", token.arg[1])
       return codeGet(
         node1.head + node2.head,
         "(" + node1.body + " - " + node2.body + ")",
@@ -114,13 +124,13 @@ _ "Gap"
   = $(Whitespace*)
 
 FactorInteger "Integer"
-  = [0-9]+ { return token("integer", text()); }
+  = [0-9]+ { return token("integer", text(), location().start); }
 
 FactorNumeric
   = FactorInteger
 
 FactorBrackets
-  = "(" _ main:Expression _ ")" { return token("round", [main]); }
+  = "(" _ main:Expression _ ")" { return token("round", [main], location().start); }
 
 Factor
   = FactorNumeric
@@ -128,35 +138,35 @@ Factor
 
 Pow
   = head:(Factor _ (
-      "^" { return "circumflex"; }
+      "^" { return ["circumflex", location().start]; }
     ) _)* tail:Factor {
       let result = tail;
       for (let i = head.length - 1; i >= 0; i--) {
-        result = token(head[i][2], [head[i][0], result]);
+        result = token(head[i][2][0], [head[i][0], result], head[i][2][1]);
       }
       return result;
     }
 
 Mul
   = head:Pow tail:(_ (
-      "*" { return "asterisk"; }
-    / "/" { return "slash"; }
+      "*" { return ["asterisk", location().start]; }
+    / "/" { return ["slash", location().start]; }
     ) _ Pow)* {
       let result = head;
       for (let i = 0; i < tail.length; i++) {
-        result = token(tail[i][1], [result, tail[i][3]]);
+        result = token(tail[i][1][0], [result, tail[i][3]], tail[i][1][1]);
       }
       return result;
     }
 
 Add
   = head:Mul tail:(_ (
-      "+" { return "plus"; }
-    / "-" { return "minus"; }
+      "+" { return ["plus", location().start]; }
+    / "-" { return ["minus", location().start]; }
     ) _ Mul)* {
       let result = head;
       for (let i = 0; i < tail.length; i++) {
-        result = token(tail[i][1], [result, tail[i][3]]);
+        result = token(tail[i][1][0], [result, tail[i][3]], tail[i][1][1]);
       }
       return result;
     }
