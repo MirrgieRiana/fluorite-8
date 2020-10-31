@@ -1,104 +1,215 @@
 
 {
 
-  function token(type, arg, location) {
-    return {type, arg, location};
-  }
+  const fl8lib = {
 
-  class Fluorite8CompileError extends Error {
+    fl8: (() => {
+      const fl8 = {};
 
-    constructor(message, fl8Location) {
-      super(message + " (L:" + fl8Location.line + ",C:" + fl8Location.column + ")");
-      this.name = "Fluorite8CompileError";
-      this.fl8Location = fl8Location;
-    }
-
-  }
-
-  class Environment {
-
-    constructor() {
-      this.handlerRegistry = {};
-    }
-
-    registerHandler(domain, type, handler) {
-      if (this.handlerRegistry[domain] === undefined) {
-        this.handlerRegistry[domain] = {};
+      {
+        class Fluorite8RuntimeError extends Error {
+          constructor(message, file, fl8Location) {
+            super(message + " @ " + file + " (" + fl8Location + ")");
+            this.name = "Fluorite8RuntimeError";
+            this.file = file;
+            this.fl8Location = fl8Location;
+          }
+        }
+        fl8.Fluorite8RuntimeError = Fluorite8RuntimeError;
       }
-      this.handlerRegistry[domain][type] = handler;
-    }
 
-    compile(domain, token) {
-      const list1 = this.handlerRegistry[domain];
-      if (list1 === undefined) throw new Fluorite8CompileError("No such domain: " + domain, token.location);
-      const list2 = list1[token.type];
-      if (list2 === undefined) throw new Fluorite8CompileError("No such handler: " + domain + "/" + token.type, token.location);
-      return list2(this, token);
-    }
+      {
+        fl8.getFunction = object => {
+          return object[Object.getOwnPropertyNames(object)[0]];
+        };
+      }
 
-  }
+      {
+        fl8.throwRuntimeError = function(message, file, fl8Location) {
+          fl8.getFunction({[file + " (" + fl8Location + ")"]: function() {
+            const e = new fl8.Fluorite8RuntimeError(message, file, fl8Location);
+            //console.log(e);
+            throw e;
+          }})();
+        };
+      }
 
-  function createEnvironment() {
+      return fl8;
+    })(),
 
-    function codeGet(head, body, type) {
+    fl8c: (() => {
+      const fl8c = {};
+
+      {
+        class Fluorite8CompileError extends Error {
+          constructor(message, env, token) {
+            super(message + " @ " + env.file + " (L:" + token.location.line + ",C:" + token.location.column + ")");
+            this.name = "Fluorite8CompileError";
+            this.env = env;
+            this.token = token;
+          }
+        }
+        fl8c.Fluorite8CompileError = Fluorite8CompileError;
+      }
+
+      {
+        class Environment {
+
+          constructor() {
+            this.file = null;
+            this.handlerRegistry = {};
+          }
+
+          setFile(file) {
+            this.file = file;
+          }
+
+          registerHandler(domain, type, handler) {
+            if (this.handlerRegistry[domain] === undefined) {
+              this.handlerRegistry[domain] = {};
+            }
+            this.handlerRegistry[domain][type] = handler;
+          }
+
+          getHandler(domain, token) {
+            const map = this.handlerRegistry[domain];
+            if (map === undefined) throw new fl8c.Fluorite8CompileError("No such domain: " + domain, this, token);
+            return map[token.type];
+          }
+
+          getNode(domain, token) {
+            const handler = this.getHandler(domain, token)
+            if (handler === undefined) throw new fl8c.Fluorite8CompileError("No such handler: " + domain + "/" + token.type, this, token);
+            return handler(this, token);
+          }
+
+          compile(token) {
+            const node = this.getNode("get", token);
+            return "const file = " + JSON.stringify(this.file) + ";\n" + node.head + node.body;
+          }
+
+        }
+        fl8c.Environment = Environment;
+      }
+
+      return fl8c;
+    })(),
+
+  };
+
+  //
+
+  function createEnvironment(fl8c) {
+
+    function nodeGet(head, body, type) {
       return {head, body, type};
     }
 
-    const env = new Environment();
+    function throwRuntimeError(message, token) {
+      return "fl8.throwRuntimeError(" + JSON.stringify(message) + ", file, \"" + "L:" + token.location.line + ",C:" + token.location.column + "\");\n"
+    }
+
+    const env = new fl8c.Environment();
 
     env.registerHandler("get", "integer", (env, token) => {
-      return codeGet("", "" + parseInt(token.arg, 10), "number");
+      return nodeGet("", "" + parseInt(token.arg, 10), "number");
+    });
+    env.registerHandler("get", "identifier", (env, token) => {
+      if (token.arg === "NULL") {
+        return nodeGet("", "(null)", "unknown");
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown alias: " + token.arg, env, token);
+      }
     });
     env.registerHandler("get", "round", (env, token) => {
-      return env.compile("get", token.arg[0]);
+      return env.getNode("get", token.arg[0]);
     });
     env.registerHandler("get", "circumflex", (env, token) => {
-      const node1 = env.compile("get", token.arg[0])
-      const node2 = env.compile("get", token.arg[1])
-      return codeGet(
-        node1.head + node2.head,
-        "(Math.pow(" + node1.body + ", " + node2.body + "))",
-        "number"
-      );
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(Math.pow(" + node1.body + ", " + node2.body + "))",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
     });
     env.registerHandler("get", "asterisk", (env, token) => {
-      const node1 = env.compile("get", token.arg[0])
-      const node2 = env.compile("get", token.arg[1])
-      return codeGet(
-        node1.head + node2.head,
-        "(" + node1.body + " * " + node2.body + ")",
-        "number"
-      );
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(" + node1.body + " * " + node2.body + ")",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
     });
     env.registerHandler("get", "slash", (env, token) => {
-      const node1 = env.compile("get", token.arg[0])
-      const node2 = env.compile("get", token.arg[1])
-      return codeGet(
-        node1.head + node2.head,
-        "(" + node1.body + " / " + node2.body + ")",
-        "number"
-      );
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(" + node1.body + " / " + node2.body + ")",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
+    });
+    env.registerHandler("get", "percentage", (env, token) => {
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(" + node1.body + " % " + node2.body + ")",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
     });
     env.registerHandler("get", "plus", (env, token) => {
-      const node1 = env.compile("get", token.arg[0])
-      const node2 = env.compile("get", token.arg[1])
-      return codeGet(
-        node1.head + node2.head,
-        "(" + node1.body + " + " + node2.body + ")",
-        "number"
-      );
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(" + node1.body + " + " + node2.body + ")",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
     });
     env.registerHandler("get", "minus", (env, token) => {
-      const node1 = env.compile("get", token.arg[0])
-      const node2 = env.compile("get", token.arg[1])
-      return codeGet(
-        node1.head + node2.head,
-        "(" + node1.body + " - " + node2.body + ")",
-        "number"
-      );
+      const node1 = env.getNode("get", token.arg[0])
+      const node2 = env.getNode("get", token.arg[1])
+      if (node1.type === "number" && node2.type === "number") {
+        return nodeGet(
+          node1.head + node2.head,
+          "(" + node1.body + " - " + node2.body + ")",
+          "number"
+        );
+      } else {
+        throw new fl8c.Fluorite8CompileError("Unknown operation: " + token.type + "(" + node1.type + ", " + node2.type + ")", env, token);
+      }
     });
 
     return env;
+  }
+
+  //
+
+  function token(type, arg, location) {
+    return {type, arg, location};
   }
 
 }
@@ -107,34 +218,60 @@
 
 Root
   = _ main:Expression _ {
-      const env = createEnvironment();
+
+      const env = createEnvironment(fl8lib.fl8c);
+      env.setFile("Online Demo");
+
       const token = main;
-      const node = env.compile("get", token);
-      const js = node.head + node.body;
-      const result = eval(js);
-      return [result, js, node, token];
+      const js = env.compile(token);
+      let result;
+      {
+        const fl8 = fl8lib.fl8;
+        try {
+          result = eval(js);
+        } catch (e) {
+          if (e instanceof fl8.Fluorite8RuntimeError) {
+            result = "ERROR: " + e;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      return [result, js, token];
     }
 
 //
 
-Whitespace "Whitespace"
+CharacterWhitespace
   = [ \t\r\n]
 
-_ "Gap"
-  = $(Whitespace*)
+CharacterIdentifierHead
+  = [a-zA-Z_]
 
-FactorInteger "Integer"
+CharacterIdentifierBody
+  = [a-zA-Z_0-9]
+
+//
+
+_ "Gap"
+  = $(CharacterWhitespace*)
+
+TokenInteger "Integer"
   = [0-9]+ { return token("integer", text(), location().start); }
 
-FactorNumeric
-  = FactorInteger
+TokenIdentifier "Identifier"
+  = main:$(CharacterIdentifierHead CharacterIdentifierBody*) {
+      return token("identifier", text(), location().start);
+    }
 
-FactorBrackets
+Brackets
   = "(" _ main:Expression _ ")" { return token("round", [main], location().start); }
 
 Factor
-  = FactorNumeric
-  / FactorBrackets
+  = TokenInteger
+  / TokenIdentifier
+  / Brackets
 
 Pow
   = head:(Factor _ (
@@ -151,6 +288,7 @@ Mul
   = head:Pow tail:(_ (
       "*" { return ["asterisk", location().start]; }
     / "/" { return ["slash", location().start]; }
+    / "%" { return ["percentage", location().start]; }
     ) _ Pow)* {
       let result = head;
       for (let i = 0; i < tail.length; i++) {
