@@ -8,37 +8,60 @@
 
       {
         class Fluorite8RuntimeError extends Error {
-          constructor(message, file, fl8Location) {
-            super(message + " @ " + file + " (" + fl8Location + ")");
+          constructor(message, locationInfo) {
+            super(message + " @ " + locationInfo[0] + " (" + locationInfo[1] + ")");
             this.name = "Fluorite8RuntimeError";
-            this.file = file;
-            this.fl8Location = fl8Location;
+            this.file = locationInfo[0];
+            this.fl8Location = locationInfo[1];
           }
         }
         fl8.Fluorite8RuntimeError = Fluorite8RuntimeError;
       }
 
-      {
-        fl8.getFunction = object => {
-          return object[Object.getOwnPropertyNames(object)[0]];
-        };
-      }
+      fl8.getFunction = object => {
+        return object[Object.getOwnPropertyNames(object)[0]];
+      };
+
+      fl8.throwRuntimeError = function(message, locationInfo) {
+        fl8.getFunction({[locationInfo[0] + " (" + locationInfo[1] + ")"]: function() {
+          const e = new fl8.Fluorite8RuntimeError(message, locationInfo);
+          //console.log(e);
+          throw e;
+        }})();
+      };
 
       {
-        fl8.throwRuntimeError = function(message, file, fl8Location) {
-          fl8.getFunction({[file + " (" + fl8Location + ")"]: function() {
-            const e = new fl8.Fluorite8RuntimeError(message, file, fl8Location);
-            //console.log(e);
-            throw e;
-          }})();
-        };
+        class Runtime {
+
+          constructor() {
+            this.properties = {};
+          }
+
+          setProperty(key, value) {
+            this.properties[key] = value;
+          }
+
+          getProperty(key) {
+            return this.properties[key];
+          }
+
+        }
+        fl8.Runtime = Runtime;
       }
+
+      fl8.toNumber = (value, file, fl8Location) => {
+        const type = typeof value;
+        if (type === "number") return value;
+        fl8.throwRuntimeError("Cannot convert to number: " + value, file, fl8Location);
+      };
 
       return fl8;
     })(),
 
     fl8c: (() => {
       const fl8c = {};
+
+      fl8c.indent = code => "  " + code.replace(/\n(?!$)/g, "\n  ");
 
       {
         class Fluorite8CompileError extends Error {
@@ -85,7 +108,15 @@
 
           compile(token) {
             const node = this.getNode("get", token);
-            return "const file = " + JSON.stringify(this.file) + ";\n" + node.head + node.body;
+            return (
+              "(function(fl8, runtime) {\n" +
+              fl8c.indent(
+                "const file = " + JSON.stringify(this.file) + ";\n" +
+                node.head +
+                "return " + node.body + ";\n"
+              ) +
+              "})"
+            );
           }
 
         }
@@ -99,14 +130,26 @@
 
   //
 
+  function createRuntime(fl8) {
+    const runtime = new fl8.Runtime();
+
+    runtime.setProperty("PI", Math.PI);
+
+    return runtime;
+  }
+
   function createEnvironment(fl8c) {
 
     function nodeGet(head, body, type) {
       return {head, body, type};
     }
 
+    function loc(token) {
+      return "[file, \"" + "L:" + token.location.line + ",C:" + token.location.column + "\"]";
+    }
+
     function throwRuntimeError(message, token) {
-      return "fl8.throwRuntimeError(" + JSON.stringify(message) + ", file, \"" + "L:" + token.location.line + ",C:" + token.location.column + "\");\n"
+      return "fl8.throwRuntimeError(" + JSON.stringify(message) + ", " + loc(token) + ");\n";
     }
 
     const env = new fl8c.Environment();
@@ -117,12 +160,20 @@
     env.registerHandler("get", "identifier", (env, token) => {
       if (token.arg === "NULL") {
         return nodeGet("", "(null)", "unknown");
-      } else {
+      } else if (token.arg === "DIE") {
+        return nodeGet(throwRuntimeError("Died", token), "(null)", "unknown");
+      } else if (token.arg === "UNKNOWN") {
         throw new fl8c.Fluorite8CompileError("Unknown alias: " + token.arg, env, token);
+      } else {
+        return nodeGet("", "(runtime.getProperty(" + JSON.stringify(token.arg) + "))", "unknown");
       }
     });
     env.registerHandler("get", "round", (env, token) => {
       return env.getNode("get", token.arg[0]);
+    });
+    env.registerHandler("get", "left_plus", (env, token) => {
+      const node1 = env.getNode("get", token.arg[0])
+      return nodeGet(node1.head, "(fl8.toNumber(" + node1.body + ", " + loc(token) + "))", "number");
     });
     env.registerHandler("get", "circumflex", (env, token) => {
       const node1 = env.getNode("get", token.arg[0])
@@ -219,26 +270,38 @@
 Root
   = _ main:Expression _ {
 
+      const token = main;
+
       const env = createEnvironment(fl8lib.fl8c);
       env.setFile("Online Demo");
 
-      const token = main;
-      const js = env.compile(token);
-      let result;
-      {
-        const fl8 = fl8lib.fl8;
-        try {
-          result = eval(js);
-        } catch (e) {
-          if (e instanceof fl8.Fluorite8RuntimeError) {
-            result = "ERROR: " + e;
-          } else {
-            throw e;
-          }
+      let code;
+      try {
+        code = env.compile(token);
+      } catch (e) {
+        if (e instanceof fl8lib.fl8c.Fluorite8CompileError) {
+          return ["[Compile Error] " + e, token];
+        } else {
+          throw e;
         }
       }
 
-      return [result, js, token];
+      let func = eval(code);
+
+      const runtime = createRuntime(fl8lib.fl8);
+
+      let result;
+      try {
+        result = func(fl8lib.fl8, runtime);
+      } catch (e) {
+        if (e instanceof fl8lib.fl8.Fluorite8RuntimeError) {
+          return ["[Runtime Error] " + e, code, token];
+        } else {
+          throw e;
+        }
+      }
+
+      return [result, code, token];
     }
 
 //
@@ -273,10 +336,21 @@ Factor
   / TokenIdentifier
   / Brackets
 
-Pow
-  = head:(Factor _ (
-      "^" { return ["circumflex", location().start]; }
+Left
+  = head:((
+      "+" { return ["left_plus", location().start]; }
     ) _)* tail:Factor {
+      let result = tail;
+      for (let i = head.length - 1; i >= 0; i--) {
+        result = token(head[i][0][0], [result], head[i][0][1]);
+      }
+      return result;
+    }
+
+Pow
+  = head:(Left _ (
+      "^" { return ["circumflex", location().start]; }
+    ) _)* tail:Left {
       let result = tail;
       for (let i = head.length - 1; i >= 0; i--) {
         result = token(head[i][2][0], [head[i][0], result], head[i][2][1]);
