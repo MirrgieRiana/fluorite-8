@@ -168,6 +168,9 @@
         return nodeGet("", "(runtime.getProperty(" + JSON.stringify(token.arg) + "))", "unknown");
       }
     });
+    env.registerHandler("get", "string", (env, token) => {
+      return nodeGet("", JSON.stringify(token.arg), "string");
+    });
     env.registerHandler("get", "round", (env, token) => {
       return env.getNode("get", token.arg[0]);
     });
@@ -320,20 +323,29 @@ CharacterIdentifierBody
 _ "Gap"
   = $(CharacterWhitespace*)
 
-TokenInteger "Integer"
+LiteralInteger "Integer"
   = [0-9]+ { return token("integer", text(), location().start); }
 
-TokenIdentifier "Identifier"
+LiteralIdentifier "Identifier"
   = main:$(CharacterIdentifierHead CharacterIdentifierBody*) {
       return token("identifier", text(), location().start);
+    }
+
+LiteralString "String"
+  = "\'" main:(
+      [^'\\]
+    / "\\" main:. { return main; }
+    )* "\'" {
+      return token("string", main.join(""), location().start);
     }
 
 Brackets
   = "(" _ main:Expression _ ")" { return token("round", [main], location().start); }
 
 Factor
-  = TokenInteger
-  / TokenIdentifier
+  = LiteralInteger
+  / LiteralIdentifier
+  / LiteralString
   / Brackets
 
 Left
