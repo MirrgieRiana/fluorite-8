@@ -82,6 +82,34 @@
   }
 
   const library = {
+    toNumber(value, location) {
+      if (typeof value === "number") return value;
+      if (typeof value === "string") {
+        if (value.length === 8 && value.toUpperCase() === "INFINITY") return Infinity;
+        if (value.length === 9 && value.toUpperCase() === "-INFINITY") return -Infinity;
+        if (value.length === 3 && value.toUpperCase() === "NAN") return NaN;
+        return parseFloat(value);
+      }
+      if (typeof value === "boolean") return value ? 1 : 0;
+      throw new Error("" + value + " cannot convert to number " + location);
+    },
+    toBoolean(value, location) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return !(value === 0 || Number.isNaN(value));
+      if (typeof value === "string") return value !== "";
+      throw new Error("" + value + " cannot convert to boolean " + location);
+    },
+    toString(value, location) {
+      if (typeof value === "string") return value;
+      if (typeof value === "number") {
+        if (value === Infinity) return "INFINITY";
+        if (value === -Infinity) return "-INFINITY";
+        if (Number.isNaN(value)) return "NAN";
+        return value.toString();
+      }
+      if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+      throw new Error("" + value + " cannot convert to string " + location);
+    },
     arrayAccess(array, index, location) {
       if (!(array instanceof Array)) throw new Error("" + array + " is not an Array " + location);
       if (typeof index !== "number") throw new Error("" + index + " is not a number " + location);
@@ -114,14 +142,6 @@
       if (typeof a !== "number") throw new Error("" + a + " is not a number " + location);
       if (typeof b !== "number") throw new Error("" + b + " is not a number " + location);
       return Math.pow(a, b);
-    },
-    toPositive(number, location) {
-      if (typeof number !== "number") throw new Error("" + number + " is not a number " + location);
-      return number;
-    },
-    toNegative(number, location) {
-      if (typeof number !== "number") throw new Error("" + number + " is not a number " + location);
-      return -number;
     },
     getLength(array, location) {
       if (!(array instanceof Array)) throw new Error("" + array + " is not an Array " + location);
@@ -232,7 +252,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
       return toOperation(
-        o1.head + "const v_" + uid + " = library.toPositive(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        o1.head + "const v_" + uid + " = library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
     });
@@ -240,7 +260,31 @@
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
       return toOperation(
-        o1.head + "const v_" + uid + " = library.toNegative(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        o1.head + "const v_" + uid + " = -library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      );
+    });
+    env.registerOperatorHandler("get", "left_question", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      const uid = env.getNextUid();
+      return toOperation(
+        o1.head + "const v_" + uid + " = library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      );
+    });
+    env.registerOperatorHandler("get", "left_exclamation", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      const uid = env.getNextUid();
+      return toOperation(
+        o1.head + "const v_" + uid + " = !library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      );
+    });
+    env.registerOperatorHandler("get", "left_ampersand", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      const uid = env.getNextUid();
+      return toOperation(
+        o1.head + "const v_" + uid + " = library.toString(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
     });
@@ -514,6 +558,9 @@ Term  = head:Left tail:(_ (
 Left     = head:((
              "+" { return ["left_plus", location()]; }
            / "-" { return ["left_minus", location()]; }
+           / "?" { return ["left_question", location()]; }
+           / "!" { return ["left_exclamation", location()]; }
+           / "&" { return ["left_ampersand", location()]; }
            / "$#" { return ["left_dollar_hash", location()]; }
            ) _)* tail:Pow {
              let result = tail;
