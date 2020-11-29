@@ -424,6 +424,24 @@
     env.registerAlias("PI", {
       get: (env, token) => toOperation("", "(" + Math.PI + ")"),
     });
+    env.registerAlias("TRUE", {
+      get: (env, token) => toOperation("", "(true)"),
+    });
+    env.registerAlias("FALSE", {
+      get: (env, token) => toOperation("", "(false)"),
+    });
+    env.registerAlias("UNDEFINED", {
+      get: (env, token) => toOperation("", "(undefined)"),
+    });
+    env.registerAlias("NULL", {
+      get: (env, token) => toOperation("", "(null)"),
+    });
+    env.registerAlias("INFINITY", {
+      get: (env, token) => toOperation("", "(Infinity)"),
+    });
+    env.registerAlias("NAN", {
+      get: (env, token) => toOperation("", "(NaN)"),
+    });
 
   }
 
