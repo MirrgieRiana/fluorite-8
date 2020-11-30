@@ -158,17 +158,36 @@
     function indent(code) {
       return "  " + code.replace(/\n(?!$)/g, "\n  ");
     }
-    function toOperation(head/* string */, body/* string */) {
-      return {head, body};
+    class OperationGet {
+      constructor(head/* string */, body/* string */) {
+        this.head = head;
+        this.body = body;
+        this.setType("any");
+      }
+      setType(name/* string */, argument = {}/* object */) {
+        this.type = {name, ...argument};
+        return this;
+      }
     }
-    function toOperationSet(accept/* operationGet => operationRun */, suggestedName = undefined/* string */) {
-      return {accept, suggestedName};
+    class OperationSet {
+      constructor(accept/* operationGet => operationRun */) {
+        this.accept = accept;
+        this.setSuggestedName(undefined);
+      }
+      setSuggestedName(suggestedName/* string */) {
+        this.suggestedName = suggestedName;
+        return this;
+      }
     }
-    function toOperationArray(generate/* operationSet => operationRun */) {
-      return {generate};
+    class OperationArray {
+      constructor(generate/* operationSet => operationRun */) {
+        this.generate = generate;
+      }
     }
-    function toOperationRun(head/* string */) {
-      return {head};
+    class OperationRun {
+      constructor(head/* string */) {
+        this.head = head;
+      }
     }
     function registerDefaultCompilerHandler(domain) {
       env.registerCompilerHandler(domain, (env, token, options) => {
@@ -207,12 +226,12 @@
       operation = env.tryCompile("array", token, options);
       if (operation !== null) return operation;
       operation = env.tryCompile("get", token, options);
-      if (operation !== null) return toOperationArray(oSet => oSet.accept(operation));
+      if (operation !== null) return new OperationArray(oSet => oSet.accept(operation));
       throw new Fluorite8CompileError("Unknown operator: array/" + token.type, env, token);
     });
 
-    env.registerOperatorHandler("get", "integer", (env, token) => toOperation("", "(" + parseInt(token.argument, 10) + ")"));
-    env.registerOperatorHandler("get", "string", (env, token) => toOperation("", "(" + JSON.stringify(token.argument) + ")"));
+    env.registerOperatorHandler("get", "integer", (env, token) => new OperationGet("", "(" + parseInt(token.argument, 10) + ")"));
+    env.registerOperatorHandler("get", "string", (env, token) => new OperationGet("", "(" + JSON.stringify(token.argument) + ")"));
     env.registerOperatorHandler("get", "identifier", (env, token) => {
       const handlerTable = env.resolveAlias(token.argument);
       if (handlerTable === undefined) throw new Fluorite8CompileError("Unknown identifier: " + token.argument, env, token);
@@ -231,11 +250,11 @@
     env.registerOperatorHandler("get", "square", (env, token) => {
       const o1 = env.compile("array", token.argument[0]);
       const uid = env.getNextUid();
-      const o2 = o1.generate(toOperationSet(o => toOperationRun(
+      const o2 = o1.generate(new OperationSet(o => new OperationRun(
         o.head +
         "v_" + uid + "[v_" + uid + ".length] = " + o.body + ";\n"
       )));
-      return toOperation(
+      return new OperationGet(
         "const v_" + uid + " = [];\n" +
         o2.head,
         "(v_" + uid + ")"
@@ -243,7 +262,7 @@
     });
     env.registerOperatorHandler("get", "empty_square", (env, token) => {
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         "const v_" + uid + " = [];\n",
         "(v_" + uid + ")"
       );
@@ -251,7 +270,7 @@
     env.registerOperatorHandler("get", "left_plus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -259,7 +278,7 @@
     env.registerOperatorHandler("get", "left_minus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = -library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -267,7 +286,7 @@
     env.registerOperatorHandler("get", "left_question", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -275,7 +294,7 @@
     env.registerOperatorHandler("get", "left_exclamation", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = !library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -283,7 +302,7 @@
     env.registerOperatorHandler("get", "left_ampersand", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = library.toString(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -291,7 +310,7 @@
     env.registerOperatorHandler("get", "left_dollar_hash", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = library.getLength(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -302,7 +321,7 @@
       const o2 = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.call(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -313,7 +332,7 @@
       const o2 = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head +
         o2.head +
         "const v_" + uid + " = library.arrayAccess(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
@@ -324,7 +343,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.add(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -333,7 +352,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.sub(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -342,7 +361,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.mul(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -351,7 +370,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.div(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -360,7 +379,7 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.pow(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -370,7 +389,7 @@
       const o2 = env.compile("get", token.argument[1]);
       const o3 = env.compile("get", token.argument[2]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head +
         "let v_" + uid + ";\n" +
         "library.checkNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");" +
@@ -393,14 +412,14 @@
       const uidBody = env.getNextUid();
       env.pushAliasFrame();
       env.registerAlias(token.argument[0].argument, {
-        get: (env, token) => toOperation("", "(v_" + uidBody + ")"),
+        get: (env, token) => new OperationGet("", "(v_" + uidBody + ")"),
       });
       const operationBody = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const label = `${env.getSuggestedName()}${loc(env, token)}`;
       const uidSymbol = env.getNextUid();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         "const v_" + uidSymbol + " = Symbol(" + JSON.stringify(label) + ");\n" +
         "const v_" + uid + " = " + "{[v_" + uidSymbol + "]: function(v_" + uidBody + ") {\n" +
         indent(
@@ -418,7 +437,7 @@
         heads.push(operation.head);
       }
       const operation = env.compile("get", token.argument[token.argument.length - 1]);
-      return toOperation(
+      return new OperationGet(
         heads.join("") +
         operation.head,
         operation.body
@@ -434,7 +453,7 @@
     });
 
     env.registerOperatorHandler("array", "semicolons", (env, token) => {
-      return toOperationArray(oSet => toOperationRun(
+      return new OperationArray(oSet => new OperationRun(
         token.argument.map(token2 => env.compile("array", token2).generate(oSet).head).join("")
       ));
     });
@@ -443,13 +462,13 @@
       const name = token.argument[0].argument;
       const uid = env.getNextUid();
       env.registerAlias(name, {
-        get: (env, token) => toOperation("", "(v_" + uid + ")"),
-        set: (env, token) => toOperationSet(o => toOperationRun(o.head + "v_" + uid + " = " + o.body + ";\n"), name),
+        get: (env, token) => new OperationGet("", "(v_" + uid + ")"),
+        set: (env, token) => new OperationSet(o => new OperationRun(o.head + "v_" + uid + " = " + o.body + ";\n")).setSuggestedName(name),
       });
       const operation = env.compile("get", token.argument[1], {
         suggestedName: name,
       });
-      return toOperationRun(
+      return new OperationRun(
         "let v_" + uid + ";\n" +
         operation.head +
         "v_" + uid + " = " + operation.body + ";\n"
@@ -460,31 +479,31 @@
       const operationGetRight = env.compile("get", token.argument[1], {
         suggestedName: operationSetLeft.suggestedName,
       });
-      return toOperationRun(
+      return new OperationRun(
         operationSetLeft.accept(operationGetRight).head
       );
     });
 
     env.registerAlias("PI", {
-      get: (env, token) => toOperation("", "(" + Math.PI + ")"),
+      get: (env, token) => new OperationGet("", "(" + Math.PI + ")"),
     });
     env.registerAlias("TRUE", {
-      get: (env, token) => toOperation("", "(true)"),
+      get: (env, token) => new OperationGet("", "(true)"),
     });
     env.registerAlias("FALSE", {
-      get: (env, token) => toOperation("", "(false)"),
+      get: (env, token) => new OperationGet("", "(false)"),
     });
     env.registerAlias("UNDEFINED", {
-      get: (env, token) => toOperation("", "(undefined)"),
+      get: (env, token) => new OperationGet("", "(undefined)"),
     });
     env.registerAlias("NULL", {
-      get: (env, token) => toOperation("", "(null)"),
+      get: (env, token) => new OperationGet("", "(null)"),
     });
     env.registerAlias("INFINITY", {
-      get: (env, token) => toOperation("", "(Infinity)"),
+      get: (env, token) => new OperationGet("", "(Infinity)"),
     });
     env.registerAlias("NAN", {
-      get: (env, token) => toOperation("", "(NaN)"),
+      get: (env, token) => new OperationGet("", "(NaN)"),
     });
 
   }
