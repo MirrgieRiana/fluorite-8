@@ -165,7 +165,11 @@
         this.setType("any");
       }
       setType(name/* string */, argument = {}/* object */) {
-        this.type = {name, ...argument};
+        if (typeof name === "object") {
+          this.type = name;
+        } else {
+          this.type = {name, ...argument};
+        }
         return this;
       }
     }
