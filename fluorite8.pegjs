@@ -234,8 +234,8 @@
       throw new Fluorite8CompileError("Unknown operator: array/" + token.type, env, token);
     });
 
-    env.registerOperatorHandler("get", "integer", (env, token) => new OperationGet("", "(" + parseInt(token.argument, 10) + ")"));
-    env.registerOperatorHandler("get", "string", (env, token) => new OperationGet("", "(" + JSON.stringify(token.argument) + ")"));
+    env.registerOperatorHandler("get", "integer", (env, token) => new OperationGet("", "(" + parseInt(token.argument, 10) + ")").setType("number"));
+    env.registerOperatorHandler("get", "string", (env, token) => new OperationGet("", "(" + JSON.stringify(token.argument) + ")").setType("string"));
     env.registerOperatorHandler("get", "identifier", (env, token) => {
       const handlerTable = env.resolveAlias(token.argument);
       if (handlerTable === undefined) throw new Fluorite8CompileError("Unknown identifier: " + token.argument, env, token);
@@ -492,10 +492,10 @@
       get: (env, token) => new OperationGet("", "(" + Math.PI + ")"),
     });
     env.registerAlias("TRUE", {
-      get: (env, token) => new OperationGet("", "(true)"),
+      get: (env, token) => new OperationGet("", "(true)").setType("boolean"),
     });
     env.registerAlias("FALSE", {
-      get: (env, token) => new OperationGet("", "(false)"),
+      get: (env, token) => new OperationGet("", "(false)").setType("boolean"),
     });
     env.registerAlias("UNDEFINED", {
       get: (env, token) => new OperationGet("", "(undefined)"),
