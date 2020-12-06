@@ -517,7 +517,7 @@
         heads.join("") +
         operation.head,
         operation.body
-      );
+      ).setType(operation.type);
     });
 
     env.registerOperatorHandler("set", "identifier", (env, token) => {
