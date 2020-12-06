@@ -389,7 +389,7 @@
       return new OperationGet(
         o1.head + "const v_" + uid + " = library.getLength(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "right_round", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
