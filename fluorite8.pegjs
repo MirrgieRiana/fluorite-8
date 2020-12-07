@@ -499,6 +499,63 @@
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const o3 = env.compile("get", token.argument[2]);
+      if (o1.type.name === "boolean" && o2.type.name === "number" && o3.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
+      if (o1.type.name === "boolean" && o2.type.name === "boolean" && o3.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      if (o1.type.name === "boolean" && o2.type.name === "string" && o3.type.name === "string") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("string");
+      }
       const uid = env.getNextUid();
       return new OperationGet(
         o1.head +
