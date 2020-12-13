@@ -82,6 +82,34 @@
   }
 
   const library = {
+    toNumber(value, location) {
+      if (typeof value === "number") return value;
+      if (typeof value === "string") {
+        if (value.length === 8 && value.toUpperCase() === "INFINITY") return Infinity;
+        if (value.length === 9 && value.toUpperCase() === "-INFINITY") return -Infinity;
+        if (value.length === 3 && value.toUpperCase() === "NAN") return NaN;
+        return parseFloat(value);
+      }
+      if (typeof value === "boolean") return value ? 1 : 0;
+      throw new Error("" + value + " cannot convert to number " + location);
+    },
+    toBoolean(value, location) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return !(value === 0 || Number.isNaN(value));
+      if (typeof value === "string") return value !== "";
+      throw new Error("" + value + " cannot convert to boolean " + location);
+    },
+    toString(value, location) {
+      if (typeof value === "string") return value;
+      if (typeof value === "number") {
+        if (value === Infinity) return "INFINITY";
+        if (value === -Infinity) return "-INFINITY";
+        if (Number.isNaN(value)) return "NAN";
+        return value.toString();
+      }
+      if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+      throw new Error("" + value + " cannot convert to string " + location);
+    },
     arrayAccess(array, index, location) {
       if (!(array instanceof Array)) throw new Error("" + array + " is not an Array " + location);
       if (typeof index !== "number") throw new Error("" + index + " is not a number " + location);
@@ -115,14 +143,6 @@
       if (typeof b !== "number") throw new Error("" + b + " is not a number " + location);
       return Math.pow(a, b);
     },
-    toPositive(number, location) {
-      if (typeof number !== "number") throw new Error("" + number + " is not a number " + location);
-      return number;
-    },
-    toNegative(number, location) {
-      if (typeof number !== "number") throw new Error("" + number + " is not a number " + location);
-      return -number;
-    },
     getLength(array, location) {
       if (!(array instanceof Array)) throw new Error("" + array + " is not an Array " + location);
       return array.length;
@@ -138,17 +158,40 @@
     function indent(code) {
       return "  " + code.replace(/\n(?!$)/g, "\n  ");
     }
-    function toOperation(head/* string */, body/* string */) {
-      return {head, body};
+    class OperationGet {
+      constructor(head/* string */, body/* string */) {
+        this.head = head;
+        this.body = body;
+        this.setType("any");
+      }
+      setType(name/* string */, argument = {}/* object */) {
+        if (typeof name === "object") {
+          this.type = name;
+        } else {
+          this.type = {name, ...argument};
+        }
+        return this;
+      }
     }
-    function toOperationSet(accept/* operationGet => operationRun */, suggestedName = undefined/* string */) {
-      return {accept, suggestedName};
+    class OperationSet {
+      constructor(accept/* operationGet => operationRun */) {
+        this.accept = accept;
+        this.setSuggestedName(undefined);
+      }
+      setSuggestedName(suggestedName/* string */) {
+        this.suggestedName = suggestedName;
+        return this;
+      }
     }
-    function toOperationArray(generate/* operationSet => operationRun */) {
-      return {generate};
+    class OperationArray {
+      constructor(generate/* operationSet => operationRun */) {
+        this.generate = generate;
+      }
     }
-    function toOperationRun(head/* string */) {
-      return {head};
+    class OperationRun {
+      constructor(head/* string */) {
+        this.head = head;
+      }
     }
     function registerDefaultCompilerHandler(domain) {
       env.registerCompilerHandler(domain, (env, token, options) => {
@@ -187,12 +230,12 @@
       operation = env.tryCompile("array", token, options);
       if (operation !== null) return operation;
       operation = env.tryCompile("get", token, options);
-      if (operation !== null) return toOperationArray(oSet => oSet.accept(operation));
+      if (operation !== null) return new OperationArray(oSet => oSet.accept(operation));
       throw new Fluorite8CompileError("Unknown operator: array/" + token.type, env, token);
     });
 
-    env.registerOperatorHandler("get", "integer", (env, token) => toOperation("", "(" + parseInt(token.argument, 10) + ")"));
-    env.registerOperatorHandler("get", "string", (env, token) => toOperation("", "(" + JSON.stringify(token.argument) + ")"));
+    env.registerOperatorHandler("get", "integer", (env, token) => new OperationGet("", "(" + parseInt(token.argument, 10) + ")").setType("number"));
+    env.registerOperatorHandler("get", "string", (env, token) => new OperationGet("", "(" + JSON.stringify(token.argument) + ")").setType("string"));
     env.registerOperatorHandler("get", "identifier", (env, token) => {
       const handlerTable = env.resolveAlias(token.argument);
       if (handlerTable === undefined) throw new Fluorite8CompileError("Unknown identifier: " + token.argument, env, token);
@@ -211,11 +254,11 @@
     env.registerOperatorHandler("get", "square", (env, token) => {
       const o1 = env.compile("array", token.argument[0]);
       const uid = env.getNextUid();
-      const o2 = o1.generate(toOperationSet(o => toOperationRun(
+      const o2 = o1.generate(new OperationSet(o => new OperationRun(
         o.head +
         "v_" + uid + "[v_" + uid + ".length] = " + o.body + ";\n"
       )));
-      return toOperation(
+      return new OperationGet(
         "const v_" + uid + " = [];\n" +
         o2.head,
         "(v_" + uid + ")"
@@ -223,34 +266,130 @@
     });
     env.registerOperatorHandler("get", "empty_square", (env, token) => {
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         "const v_" + uid + " = [];\n",
         "(v_" + uid + ")"
       );
     });
     env.registerOperatorHandler("get", "left_plus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
+      if (o1.type.name === "number") {
+        return o1;
+      }
+      if (o1.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " ? 1 : 0;\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
-        o1.head + "const v_" + uid + " = library.toPositive(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+      return new OperationGet(
+        o1.head + "const v_" + uid + " = library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "left_minus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
+      if (o1.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = -" + o1.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
+      if (o1.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " ? -1 : 0;\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
-        o1.head + "const v_" + uid + " = library.toNegative(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+      return new OperationGet(
+        o1.head + "const v_" + uid + " = -library.toNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
+    });
+    env.registerOperatorHandler("get", "left_question", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      if (o1.type.name === "boolean") {
+        return o1;
+      }
+      if (o1.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = !(" + o1.body + " === 0 || Number.isNaN(" + o1.body + "));\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      if (o1.type.name === "string") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " !== \"\";\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      const uid = env.getNextUid();
+      return new OperationGet(
+        o1.head + "const v_" + uid + " = library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      ).setType("boolean");
+    });
+    env.registerOperatorHandler("get", "left_exclamation", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      if (o1.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = !" + o1.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      if (o1.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " === 0 || Number.isNaN(" + o1.body + ");\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      if (o1.type.name === "string") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " === \"\";\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      const uid = env.getNextUid();
+      return new OperationGet(
+        o1.head + "const v_" + uid + " = !library.toBoolean(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      ).setType("boolean");
+    });
+    env.registerOperatorHandler("get", "left_ampersand", (env, token) => {
+      const o1 = env.compile("get", token.argument[0]);
+      if (o1.type.name === "string") {
+        return o1;
+      }
+      if (o1.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + "const v_" + uid + " = " + o1.body + " ? \"TRUE\" : \"FALSE\";\n",
+          "(v_" + uid + ")"
+        ).setType("string");
+      }
+      const uid = env.getNextUid();
+      return new OperationGet(
+        o1.head + "const v_" + uid + " = library.toString(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
+        "(v_" + uid + ")"
+      ).setType("string");
     });
     env.registerOperatorHandler("get", "left_dollar_hash", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + "const v_" + uid + " = library.getLength(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "right_round", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
@@ -258,7 +397,7 @@
       const o2 = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.call(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
       );
@@ -269,7 +408,7 @@
       const o2 = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head +
         o2.head +
         "const v_" + uid + " = library.arrayAccess(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
@@ -279,54 +418,146 @@
     env.registerOperatorHandler("get", "plus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
+      if (o1.type.name === "number" && o2.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + o2.head + "const v_" + uid + " = " + o1.body + " + " + o2.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.add(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "minus", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
+      if (o1.type.name === "number" && o2.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + o2.head + "const v_" + uid + " = " + o1.body + " - " + o2.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.sub(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "asterisk", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
+      if (o1.type.name === "number" && o2.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + o2.head + "const v_" + uid + " = " + o1.body + " * " + o2.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.mul(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "slash", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
+      if (o1.type.name === "number" && o2.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + o2.head + "const v_" + uid + " = " + o1.body + " / " + o2.body + ";\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.div(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "circumflex", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
+      if (o1.type.name === "number" && o2.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head + o2.head + "const v_" + uid + " = Math.pow(" + o1.body + ", " + o2.body + ");\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head + o2.head + "const v_" + uid + " = library.pow(" + o1.body + ", " + o2.body + ", " + JSON.stringify(loc(env, token)) + ");\n",
         "(v_" + uid + ")"
-      );
+      ).setType("number");
     });
     env.registerOperatorHandler("get", "ternary_question_colon", (env, token) => {
       const o1 = env.compile("get", token.argument[0]);
       const o2 = env.compile("get", token.argument[1]);
       const o3 = env.compile("get", token.argument[2]);
+      if (o1.type.name === "boolean" && o2.type.name === "number" && o3.type.name === "number") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("number");
+      }
+      if (o1.type.name === "boolean" && o2.type.name === "boolean" && o3.type.name === "boolean") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("boolean");
+      }
+      if (o1.type.name === "boolean" && o2.type.name === "string" && o3.type.name === "string") {
+        const uid = env.getNextUid();
+        return new OperationGet(
+          o1.head +
+          "let v_" + uid + ";\n" +
+          "if (" + o1.body + ") {\n" +
+          indent(
+            o2.head +
+            "v_" + uid + " = " + o2.body + ";\n"
+          ) +
+          "} else {\n" +
+          indent(
+            o3.head +
+            "v_" + uid + " = " + o3.body + ";\n"
+          ) +
+          "}\n",
+          "(v_" + uid + ")"
+        ).setType("string");
+      }
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         o1.head +
         "let v_" + uid + ";\n" +
         "library.checkNumber(" + o1.body + ", " + JSON.stringify(loc(env, token)) + ");" +
@@ -349,14 +580,14 @@
       const uidBody = env.getNextUid();
       env.pushAliasFrame();
       env.registerAlias(token.argument[0].argument, {
-        get: (env, token) => toOperation("", "(v_" + uidBody + ")"),
+        get: (env, token) => new OperationGet("", "(v_" + uidBody + ")"),
       });
       const operationBody = env.compile("get", token.argument[1]);
       env.popAliasFrame();
       const label = `${env.getSuggestedName()}${loc(env, token)}`;
       const uidSymbol = env.getNextUid();
       const uid = env.getNextUid();
-      return toOperation(
+      return new OperationGet(
         "const v_" + uidSymbol + " = Symbol(" + JSON.stringify(label) + ");\n" +
         "const v_" + uid + " = " + "{[v_" + uidSymbol + "]: function(v_" + uidBody + ") {\n" +
         indent(
@@ -374,11 +605,11 @@
         heads.push(operation.head);
       }
       const operation = env.compile("get", token.argument[token.argument.length - 1]);
-      return toOperation(
+      return new OperationGet(
         heads.join("") +
         operation.head,
         operation.body
-      );
+      ).setType(operation.type);
     });
 
     env.registerOperatorHandler("set", "identifier", (env, token) => {
@@ -390,7 +621,7 @@
     });
 
     env.registerOperatorHandler("array", "semicolons", (env, token) => {
-      return toOperationArray(oSet => toOperationRun(
+      return new OperationArray(oSet => new OperationRun(
         token.argument.map(token2 => env.compile("array", token2).generate(oSet).head).join("")
       ));
     });
@@ -399,13 +630,13 @@
       const name = token.argument[0].argument;
       const uid = env.getNextUid();
       env.registerAlias(name, {
-        get: (env, token) => toOperation("", "(v_" + uid + ")"),
-        set: (env, token) => toOperationSet(o => toOperationRun(o.head + "v_" + uid + " = " + o.body + ";\n"), name),
+        get: (env, token) => new OperationGet("", "(v_" + uid + ")"),
+        set: (env, token) => new OperationSet(o => new OperationRun(o.head + "v_" + uid + " = " + o.body + ";\n")).setSuggestedName(name),
       });
       const operation = env.compile("get", token.argument[1], {
         suggestedName: name,
       });
-      return toOperationRun(
+      return new OperationRun(
         "let v_" + uid + ";\n" +
         operation.head +
         "v_" + uid + " = " + operation.body + ";\n"
@@ -416,13 +647,31 @@
       const operationGetRight = env.compile("get", token.argument[1], {
         suggestedName: operationSetLeft.suggestedName,
       });
-      return toOperationRun(
+      return new OperationRun(
         operationSetLeft.accept(operationGetRight).head
       );
     });
 
     env.registerAlias("PI", {
-      get: (env, token) => toOperation("", "(" + Math.PI + ")"),
+      get: (env, token) => new OperationGet("", "(" + Math.PI + ")"),
+    });
+    env.registerAlias("TRUE", {
+      get: (env, token) => new OperationGet("", "(true)").setType("boolean"),
+    });
+    env.registerAlias("FALSE", {
+      get: (env, token) => new OperationGet("", "(false)").setType("boolean"),
+    });
+    env.registerAlias("UNDEFINED", {
+      get: (env, token) => new OperationGet("", "(undefined)"),
+    });
+    env.registerAlias("NULL", {
+      get: (env, token) => new OperationGet("", "(null)"),
+    });
+    env.registerAlias("INFINITY", {
+      get: (env, token) => new OperationGet("", "(Infinity)"),
+    });
+    env.registerAlias("NAN", {
+      get: (env, token) => new OperationGet("", "(NaN)"),
     });
 
   }
@@ -496,6 +745,9 @@ Term  = head:Left tail:(_ (
 Left     = head:((
              "+" { return ["left_plus", location()]; }
            / "-" { return ["left_minus", location()]; }
+           / "?" { return ["left_question", location()]; }
+           / "!" { return ["left_exclamation", location()]; }
+           / "&" { return ["left_ampersand", location()]; }
            / "$#" { return ["left_dollar_hash", location()]; }
            ) _)* tail:Pow {
              let result = tail;
